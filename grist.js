@@ -37,9 +37,9 @@ function withFilter(filter) {
   return `${baseRecords}?${params.toString()}`  // <- แก้ BASE_RECORDS -> baseRecords
 }
 
-// Column names: urlsId (short id), longUrl, clicks, createdAt
+// Column names: id2 (short id), longUrl, clicks, createdAt
 export async function findRecordByShortId(shortId) {
-  const data = await gristFetch(withFilter({ urlsId: [shortId] }))
+  const data = await gristFetch(withFilter({ id2: [shortId] }))
   return data.records?.[0] || null
 }
 
@@ -49,7 +49,7 @@ export async function findRecordByLongUrl(longUrl) {
 }
 
 export async function shortIdExists(shortId) {
-  const data = await gristFetch(withFilter({ urlsId: [shortId] }))
+  const data = await gristFetch(withFilter({ id2: [shortId] }))
   return (data.records?.length ?? 0) > 0
 }
 
@@ -59,7 +59,7 @@ export async function createShortRecord({ id, longUrl }) {
     body: JSON.stringify({
       records: [{
         fields: {
-          urlsId: id,
+          id2: id,
           longUrl,
           createdAt: new Date().toISOString(),
           clicks: 0
@@ -84,3 +84,28 @@ export const findByLong     = findRecordByLongUrl
 export const existsId       = shortIdExists
 export const createUrl      = createShortRecord
 export const incrementClicks = incrementClickCount
+
+
+//login
+// ===== เพิ่มค่าคงที่สำหรับตาราง Login =====
+const LOGIN_TABLE = process.env.GRIST_LOGIN_TABLE || 'LoginLogs';
+const loginRecords = `${GRIST_BASE}/api/docs/${GRIST_DOC}/tables/${encodeURIComponent(LOGIN_TABLE)}/records`;
+
+// ===== ฟังก์ชันบันทึก Log การล็อกอิน =====
+export async function logLogin({ username, success, ip, userAgent, note }) {
+  return gristFetch(loginRecords, {
+    method: 'POST',
+    body: JSON.stringify({
+      records: [{
+        fields: {
+          Username: username || '',
+          Success: !!success,            // ต้องเป็นคอลัมน์ชนิด Toggle/Bool ใน Grist
+          IP: ip || null,
+          UserAgent: userAgent || null,
+          LoginAt: new Date().toISOString(),
+          Note: note || null,
+        }
+      }]
+    })
+  });
+}

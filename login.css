@@ -1,0 +1,180 @@
+/* /public/login/login-gpo.css */
+
+/* ===== Theme / Variables ===== */
+:root{
+  --primary: #2FB3AC;            /* สีปุ่มตามภาพตัวอย่าง */
+  --gpo-green: #2FB3AC;          /* ถ้าอยากเป็นธีม GPO ให้เปลี่ยน var ใน .btn-primary ด้านล่าง */
+  --text: #EAEAF0;
+  --muted: #C8CBD3;
+  --glass: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(255,255,255,0.25);
+  --shadow: 0 8px 40px rgba(0,0,0,.45);
+  --radius: 28px;
+  --card-radius: 22px;
+  --input-radius: 18px;
+}
+
+*{ 
+  box-sizing: border-box; 
+}
+
+html,body{ 
+  height:100%; 
+}
+body{
+  margin:0;
+  font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: var(--text);
+  background: #19B4AC;
+  overflow: hidden;
+}
+
+/* ===== Background (เปลี่ยนรูปได้ตรงนี้) ===== */
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  background-image:
+    linear-gradient(0deg, rgba(5,7,10,.55), rgba(5,7,10,.25)),
+    url('im/gpo001.jpg'); /* ใส่ไฟล์รูปของคุณ เช่น mountains.jpg */
+  background-size: cover;
+  background-position: center;
+  filter: saturate(1.1) contrast(1.05);
+  z-index:-2;
+}
+
+/* ===== Glass Card ===== */
+.card{
+  position:absolute;
+  top:50%; left:50%;
+  transform: translate(-50%, -50%);
+  width:min(520px, 86%);
+  padding: 34px 36px 28px;
+  border-radius: var(--card-radius);
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 20px 60px rgba(80, 80, 80, 0.35), inset 0 1px 0 rgba(255,255,255,.06);
+  text-align:center;
+}
+
+.title{
+  margin: 6px 0 24px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing:.3px;
+}
+
+/* ===== Form ===== */
+.form{ display:flex; flex-direction: column; gap:16px; }
+
+.field{
+  position:relative;
+}
+.field input{
+  width:100%;
+  padding: 16px 46px 16px 16px;
+  border-radius: var(--input-radius);
+  border: 1px solid rgba(255,255,255,.18);
+  outline:none;
+  background: rgba(255,255,255,.06);
+  color: var(--text);
+  font-size: 15px;
+  transition: box-shadow .2s, border-color .2s, background .2s;
+}
+.field input::placeholder{ color:#cfd3da; opacity: 100; }
+.field input:focus{
+  border-color: rgba(255,255,255,.35);
+  box-shadow: 0 0 0 4px rgba(255,255,255,.08);
+  background: rgba(255,255,255,.09);
+}
+.field i{
+  position:absolute;
+  right:14px; top:50%;
+  transform: translateY(-50%);
+  color:#d9dbe2;
+  opacity:.85;
+}
+
+/* ===== Button ===== */
+.btn-primary{
+  margin-top: 6px;
+  width: 60%;
+  align-self:center;
+  padding: 14px 18px;
+  border:none;
+  border-radius: 999px;
+  font-weight: 700;
+  letter-spacing:.2px;
+  color: white;
+  cursor:pointer;
+  background: linear-gradient(180deg, var(--primary), #2FB3AC);
+  box-shadow: 0 12px 28px #2FB3AC;
+  transition: transform .15s ease, box-shadow .2s ease, filter .2s ease;
+}
+.btn-primary:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 16px 36px #2FB3AC;
+}
+.btn-primary:active{ transform: translateY(0); }
+
+/* อยากใช้ธีม GPO ให้ใช้บรรทัดนี้แทน (แค่ย้ายไปคอมเมนต์/แก้ var) */
+/* .btn-primary{ background: linear-gradient(180deg, var(--gpo-green), #229d97); box-shadow: 0 12px 28px rgba(47,179,172,.45); } */
+
+/* ===== Divider ===== */
+.divider{
+  position: relative;
+  margin: 22px auto 14px;
+  width: 86%;
+  height: 1px;
+}
+.divider span{
+  position:absolute;
+  left:50%; top:50%;
+  transform: translate(-50%, -50%);
+  padding: 0 12px;
+  font-size: 12px;
+  letter-spacing:.8px;
+  color: var(--muted);
+  backdrop-filter: blur(14px);
+}
+
+/* ===== Socials ===== */
+.socials{
+  display:flex;
+  gap:16px;
+  justify-content:center;
+  margin: 18px 0 8px;
+}
+.social{
+  width:46px; height:46px;
+  display:grid; place-items:center;
+  border-radius:50%;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.2);
+  color:#fff;
+  text-decoration:none;
+  transition: transform .15s, box-shadow .2s, background .2s;
+}
+.social:hover{ transform: translateY(-2px); background: rgba(255,255,255,.18); }
+.facebook{ background: rgba(59,89,152,.9); }
+.google  { background: rgba(220,78,65,.92); }
+.twitter { background: rgba(29,161,242,.92); }
+
+/* ===== Muted link ===== */
+.link-muted{
+  display:inline-block;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration:none;
+}
+.link-muted:hover{ text-decoration: underline; }
+
+/* ===== Responsive ===== */
+@media (max-width: 640px){
+  .frame{ width: 96vw; height: 92vh; margin: 4vh auto 0; }
+  .card{ width: 88%; padding: 26px 22px; }
+  .btn-primary{ width: 100%; }
+}

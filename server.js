@@ -57,52 +57,34 @@ function nano(n = 9) {
   return out
 }
 
-// ---------- Routes ----------
-app.get('/', (_req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'shortener', 'index.html'))
-)
 
-app.get('/favicon.ico', (_req, res) => res.status(204).end())
 
-app.post('/api/shorten', asyncHandler(async (req, res) => {
-  const input = (req.body?.url || '').trim()
-  if (!input) return res.status(400).json({ error: 'Missing url' })
-  if (!isValidUrl(input)) return res.status(400).json({ error: 'Invalid URL' })
 
-  const longUrl = normalizeUrl(input)
-  const exist = await findByLong(longUrl)
-  if (exist) {
-    const id = exist.fields.urlsId
-    return res.json({ id, shortUrl: `${getBaseUrl(req)}/${id}` })
+
+app.use(express.urlencoded({ extended: true }));  // <- เพิ่มบรรทัดนี้
+app.use(express.json());
+
+// ---------- Auth Routes ----------
+app.post('/login', asyncHandler(async (req, res) => {
+  const { username, password } = req.body || {};
+
+  if (!username || !password) {
+    return res.status(400).json({ ok: false, message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
   }
 
-  let id = ''
-  do { id = nano(9) } while (await existsId(id))
+  // ตัวอย่างแบบง่าย (งานจริงค่อยต่อ DB/bcrypt)
+  if (username === 'gpo' && password === '1234') {
+    // ชี้ไปหน้า index.html ของ shortener
+    return res.status(200).json({ ok: true, redirect: '/shortener/index.html' });
+  }
 
-  await createUrl({ id, longUrl })
-  res.json({ id, shortUrl: `${getBaseUrl(req)}/${id}` })
-}))
+  return res.status(401).json({ ok: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+}));
 
-app.get('/qr/:id.png', asyncHandler(async (req, res) => {
-  const { id } = req.params
-  const shortUrl = `${getBaseUrl(req)}/${id}`
-  const png = await QRCode.toBuffer(shortUrl, {
-    errorCorrectionLevel: 'M',
-    margin: 1,
-    width: 512,
-  })
-  res.setHeader('Content-Type', 'image/png')
-  res.setHeader('Cache-Control', 'public, max-age=604800, immutable')
-  res.send(png)
-}))
-
-app.get('/:id([0-9A-Za-z_-]{3,32})', asyncHandler(async (req, res) => {
-  const { id } = req.params
-  const rec = await findById(id)
-  if (!rec) return res.status(404).send('Not found')
-  await incrementClicks(rec.id, rec.fields.clicks)
-  res.redirect(301, rec.fields.longUrl)
-}))
+app.post('/logout', (_req, res) => {
+  // ถ้าใช้ session จริงให้ destroy ตรงนี้
+  res.status(200).json({ ok: true });
+});
 
 // ---------- Error handler ----------
 app.use((err, _req, res, _next) => {
@@ -120,3 +102,107 @@ app.listen(PORT, () => {
     console.log(`   (If using ngrok, open the ngrok URL instead)`)
   }
 })
+
+
+
+// ---------- Auth Routes ----------
+app.post('/login', asyncHandler(async (req, res) => {
+  const { username, password } = req.body || {};
+
+  // ตรวจค่าที่ส่งมา
+  if (!username || !password) {
+    return res.status(400).json({ ok: false, message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
+  }
+
+  // ตัวอย่าง: hardcode (งานจริงควรเช็คกับ DB และใช้ bcrypt)
+  if (username === 'gpo' && password === '1234') {
+    return res.status(200).json({ ok: true, redirect: '/shortener/index.html' });
+  }
+
+  return res.status(401).json({ ok: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+}));
+
+app.post('/logout', (req, res) => {
+  // ถ้าใช้ session จริง ให้ destroy ที่นี่
+  res.status(200).json({ ok: true });
+});
+
+
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  // TODO: ตรวจสอบรหัสผ่านจริงของคุณ
+  const isValid = (username === 'admin' && password === '1234');
+
+  // เก็บข้อมูล user agent / ip
+  const userAgent = req.get('user-agent');
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+
+  try {
+    await appendLogin({
+      username,
+      success: isValid,
+      ip,
+      userAgent,
+      note: isValid ? 'login ok' : 'invalid credentials',
+    });
+  } catch (e) {
+    console.error('Failed to log to Grist:', e.message);
+    // ไม่ต้องบล็อคการล็อกอินถ้าบันทึก log ไม่สำเร็จ
+  }
+
+  if (isValid) {
+    // ล็อกอินสำเร็จ → redirect ไปหน้าโปรเจกต์ของคุณ
+    return res.redirect('/index.html'); // หรือเส้นทางที่คุณต้องการ
+  } else {
+    // ล้มเหลว → กลับหน้า login พร้อมข้อความ
+    return res.status(401).send('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+  }
+});
+
+
+import { logLogin } from './grist.js'; // ถ้าจะบันทึกลง Grist (มีในไฟล์คุณแล้ว) :contentReference[oaicite:4]{index=4}
+
+app.post('/login', asyncHandler(async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) {
+    // ถ้าเป็น form ให้ส่งกลับแบบข้อความ; ถ้า JSON ก็ส่ง JSON
+    if (req.is('application/json')) {
+      return res.status(400).json({ ok: false, message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
+    }
+    return res.status(400).send('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
+  }
+
+  const isValid = (username === 'gpo' && password === '1234');
+
+  // (ถ้าจะ log ลง Grist)
+  try {
+    await logLogin?.({
+      username,
+      success: isValid,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress,
+      userAgent: req.get('user-agent'),
+      note: isValid ? 'login ok' : 'invalid credentials',
+    });
+  } catch (e) {
+    console.error('Failed to log to Grist:', e.message);
+  }
+
+  if (isValid) {
+    // ถ้าเป็น JSON → ส่ง JSON บอก redirect; ถ้าเป็น form → redirect เลย
+    if (req.is('application/json')) {
+      return res.status(200).json({ ok: true, redirect: '/shortener/index.html' });
+    }
+    return res.redirect(303, '/shortener/index.html');
+  }
+
+  if (req.is('application/json')) {
+    return res.status(401).json({ ok: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+  }
+  return res.status(401).send('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+}));
+
