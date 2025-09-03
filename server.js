@@ -1,9 +1,11 @@
 // server.js
+
 import 'dotenv/config'
 import express from 'express'
 import path from 'path'
-import QRCode from 'qrcode'
 import crypto from 'crypto'
+import session from 'express-session'
+import bcrypt from 'bcryptjs'
 import { fileURLToPath } from 'url'
 import {
   findByLong,
@@ -11,6 +13,9 @@ import {
   createUrl,
   findById,
   incrementClicks,
+  findUserByUsernameOrEmail,
+  updateUserLastLogin,
+  logLogin,
 } from './grist.js'
 
 // ---------- Setup ----------
@@ -20,11 +25,28 @@ const __dirname  = path.dirname(__filename)
 const app  = express()
 const PORT = process.env.PORT || 3000
 
-// สำคัญ: บอก Express ว่าอยู่หลัง proxy (เช่น ngrok/cloudflare)
+// if you run behind ngrok/reverse proxies
 app.set('trust proxy', true)
 
+app.use(express.urlencoded({ extended: true }))
 app.use(express.json())
 app.use(express.static(path.join(__dirname, 'public')))
+app.get('/', (_req, res) => {
+  res.redirect('/login/login.html');  // or '/shortener/index.html'
+});
+
+// Simple session (MemoryStore; OK for dev)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'change-me',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: false, // set true if you serve via HTTPS only
+    maxAge: 1000 * 60 * 60 * 24, // 1 day
+  }
+}))
 
 // ---------- Helpers ----------
 const asyncHandler = (fn) => (req, res, next) =>
@@ -57,34 +79,138 @@ function nano(n = 9) {
   return out
 }
 
-
-
-
-
-app.use(express.urlencoded({ extended: true }));  // <- เพิ่มบรรทัดนี้
-app.use(express.json());
+function requireAuth(req, res, next) {
+  if (req.session?.user) return next()
+  // For API calls, return 401 JSON; for pages, redirect to /login/login.html
+  if (req.accepts('json')) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  return res.redirect('/login/login.html')
+}
 
 // ---------- Auth Routes ----------
 app.post('/login', asyncHandler(async (req, res) => {
-  const { username, password } = req.body || {};
+  const { username, password } = req.body || {}
 
   if (!username || !password) {
-    return res.status(400).json({ ok: false, message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
+    if (req.is('application/json')) {
+      return res.status(400).json({ ok: false, message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' })
+    }
+    return res.status(400).send('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน')
   }
 
-  // ตัวอย่างแบบง่าย (งานจริงค่อยต่อ DB/bcrypt)
-  if (username === 'gpo' && password === '1234') {
-    // ชี้ไปหน้า index.html ของ shortener
-    return res.status(200).json({ ok: true, redirect: '/shortener/index.html' });
+  // 1) Find user by email or username
+  const userRecord = await findUserByUsernameOrEmail(username)
+  const okUser = !!userRecord?.id
+  let passwordOk = false
+
+  if (okUser) {
+    const fields = userRecord.fields || {}
+    const storedHashOrPlain = fields.password || ''
+    // If you saved plain text in Grist (not recommended), allow plain compare
+    if (storedHashOrPlain.startsWith('$2a$') || storedHashOrPlain.startsWith('$2b$')) {
+      passwordOk = await bcrypt.compare(password, storedHashOrPlain)
+    } else {
+      passwordOk = (password === storedHashOrPlain)
+    }
   }
 
-  return res.status(401).json({ ok: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
-}));
+  const success = okUser && passwordOk
 
-app.post('/logout', (_req, res) => {
-  // ถ้าใช้ session จริงให้ destroy ตรงนี้
-  res.status(200).json({ ok: true });
-});
+  // optional login log
+  try {
+    await logLogin({
+      username,
+      success,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress,
+      userAgent: req.get('user-agent'),
+      note: success ? 'login ok' : 'invalid credentials',
+    })
+  } catch (e) {
+    console.error('Failed to log login:', e.message)
+  }
+
+  if (!success) {
+    if (req.is('application/json')) {
+      return res.status(401).json({ ok: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' })
+    }
+    return res.status(401).send('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง')
+  }
+
+  // success → set session
+  const { userId, email, userName } = userRecord.fields
+  req.session.user = { userId, email, userName, gristRowId: userRecord.id }
+
+  // update lastLogin
+  try { await updateUserLastLogin(userRecord.id) } catch (_) {}
+
+  // JSON vs form response
+  if (req.is('application/json')) {
+    return res.status(200).json({ ok: true, redirect: '/shortener/index.html' })
+  }
+  return res.redirect(303, '/shortener/index.html')
+}))
+
+app.post('/logout', (req, res) => {
+  req.session?.destroy(() => {
+    res.status(200).json({ ok: true })
+  })
+})
+
+// ---------- Shorten API (auth required) ----------
+app.post('/api/shorten', requireAuth, asyncHandler(async (req, res) => {
+  const { url } = req.body || {}
+  if (!url || !isValidUrl(url)) {
+    return res.status(400).json({ error: 'Invalid URL' })
+  }
+
+  const normalized = normalizeUrl(url)
+
+  // If same longUrl already exists for anyone (or you can scope by user if you want)
+  const existing = await findByLong(normalized)
+  const base = getBaseUrl(req)
+
+  if (existing?.fields) {
+    const shortId = existing.fields.urlsId
+    return res.json({ shortUrl: `${base}/${shortId}` })
+  }
+
+  // generate new unique shortId
+  let shortId
+  for (let i = 0; i < 5; i++) {
+    const candidate = nano(6)
+    const taken = await existsId(candidate)
+    if (!taken) { shortId = candidate; break }
+  }
+  if (!shortId) shortId = nano(8)
+
+  // attach createdBy from session (Users.userId)
+  const createdBy = req.session.user?.userId
+
+  await createUrl({ id: shortId, longUrl: normalized, createdBy })
+
+  return res.json({ shortUrl: `${base}/${shortId}` })
+}))
+
+// ---------- Redirect route (/:id) ----------
+app.get('/:id', asyncHandler(async (req, res, next) => {
+  const shortId = req.params.id
+
+  // ignore reserved paths under /shortener and /login
+  if (shortId === 'shortener' || shortId === 'login' || shortId === 'api' ) return next()
+
+  const rec = await findById(shortId)
+  if (!rec?.fields) return res.status(404).send('Not found')
+
+  // increment clicks (best-effort)
+  try {
+    await incrementClicks(rec.id, rec.fields.clicks || 0)
+  } catch (e) {
+    console.error('Failed to increment clicks', e.message)
+  }
+
+  return res.redirect(302, rec.fields.longUrl)
+}))
 
 // ---------- Error handler ----------
 app.use((err, _req, res, _next) => {
@@ -94,115 +220,10 @@ app.use((err, _req, res, _next) => {
 
 // ---------- Start ----------
 app.listen(PORT, () => {
-  // ถ้ามี BASE_URL → แสดงเลย
   if (process.env.BASE_URL) {
     console.log(`✅ URL Shortener running at ${process.env.BASE_URL}`)
   } else {
     console.log(`✅ URL Shortener running on local: http://localhost:${PORT}`)
-    console.log(`   (If using ngrok, open the ngrok URL instead)`)
+    console.log(`   Open /login/login.html to sign in`)
   }
 })
-
-
-
-// ---------- Auth Routes ----------
-app.post('/login', asyncHandler(async (req, res) => {
-  const { username, password } = req.body || {};
-
-  // ตรวจค่าที่ส่งมา
-  if (!username || !password) {
-    return res.status(400).json({ ok: false, message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
-  }
-
-  // ตัวอย่าง: hardcode (งานจริงควรเช็คกับ DB และใช้ bcrypt)
-  if (username === 'gpo' && password === '1234') {
-    return res.status(200).json({ ok: true, redirect: '/shortener/index.html' });
-  }
-
-  return res.status(401).json({ ok: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
-}));
-
-app.post('/logout', (req, res) => {
-  // ถ้าใช้ session จริง ให้ destroy ที่นี่
-  res.status(200).json({ ok: true });
-});
-
-
-
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-
-app.post('/login', async (req, res) => {
-  const { username, password } = req.body;
-
-  // TODO: ตรวจสอบรหัสผ่านจริงของคุณ
-  const isValid = (username === 'admin' && password === '1234');
-
-  // เก็บข้อมูล user agent / ip
-  const userAgent = req.get('user-agent');
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
-
-  try {
-    await appendLogin({
-      username,
-      success: isValid,
-      ip,
-      userAgent,
-      note: isValid ? 'login ok' : 'invalid credentials',
-    });
-  } catch (e) {
-    console.error('Failed to log to Grist:', e.message);
-    // ไม่ต้องบล็อคการล็อกอินถ้าบันทึก log ไม่สำเร็จ
-  }
-
-  if (isValid) {
-    // ล็อกอินสำเร็จ → redirect ไปหน้าโปรเจกต์ของคุณ
-    return res.redirect('/index.html'); // หรือเส้นทางที่คุณต้องการ
-  } else {
-    // ล้มเหลว → กลับหน้า login พร้อมข้อความ
-    return res.status(401).send('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
-  }
-});
-
-
-import { logLogin } from './grist.js'; // ถ้าจะบันทึกลง Grist (มีในไฟล์คุณแล้ว) :contentReference[oaicite:4]{index=4}
-
-app.post('/login', asyncHandler(async (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) {
-    // ถ้าเป็น form ให้ส่งกลับแบบข้อความ; ถ้า JSON ก็ส่ง JSON
-    if (req.is('application/json')) {
-      return res.status(400).json({ ok: false, message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
-    }
-    return res.status(400).send('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
-  }
-
-  const isValid = (username === 'gpo' && password === '1234');
-
-  // (ถ้าจะ log ลง Grist)
-  try {
-    await logLogin?.({
-      username,
-      success: isValid,
-      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress,
-      userAgent: req.get('user-agent'),
-      note: isValid ? 'login ok' : 'invalid credentials',
-    });
-  } catch (e) {
-    console.error('Failed to log to Grist:', e.message);
-  }
-
-  if (isValid) {
-    // ถ้าเป็น JSON → ส่ง JSON บอก redirect; ถ้าเป็น form → redirect เลย
-    if (req.is('application/json')) {
-      return res.status(200).json({ ok: true, redirect: '/shortener/index.html' });
-    }
-    return res.redirect(303, '/shortener/index.html');
-  }
-
-  if (req.is('application/json')) {
-    return res.status(401).json({ ok: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
-  }
-  return res.status(401).send('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
-}));
-
