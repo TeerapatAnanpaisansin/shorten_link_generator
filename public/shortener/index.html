@@ -1,0 +1,34 @@
+<!-- public/shortener/index.html -->
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>URL Shortener</title>
+    <link rel="stylesheet" href="/shortener/page.css" />
+    <script type="module" src="/shortener/page.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Shorten your link</h1>
+      <form class="row" autocomplete="off">
+        <label for="url" class="sr-only">Long URL</label>
+        <input id="url" type="url" placeholder="Paste a long URL..." required />
+        <button id="btn" type="submit">Create Qr</button>
+      </form>
+      <div id="result" class="hidden" aria-live="polite">
+        <div id="qrcode"></div>
+
+        <!-- show the short link used to create the QR -->
+        <div id="shortWrap" class="short">
+          <a style ="color: #19B4AC" id="shortLink" href="#" target="_blank" rel="noopener"></a>
+          <button id="copyBtn" type="button" disabled>Copy</button>
+        </div>
+
+        <button id="downloadBtn" disabled> Download QR </button>
+      </div>
+    </main>
+  </body>
+</html>
